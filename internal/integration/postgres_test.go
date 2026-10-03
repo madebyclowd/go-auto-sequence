@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	sequence "github.com/madebyclowd/go-auto-sequence"
 	"github.com/madebyclowd/go-auto-sequence/sqlstore"
@@ -362,5 +363,46 @@ func TestConcurrencyTestHasTeeth(t *testing.T) {
 	}
 	if issueConcurrently(t, racyStore{db, newTable(t, db)}, 50, 20) {
 		t.Fatal("the broken store passed: the concurrency assertion has no teeth")
+	}
+}
+
+// The recommended way to bound lock waits: set lock_timeout on the connection (or role), not with
+// SET LOCAL inside the caller's transaction. The pool store then fails with SQLSTATE 55P03, which
+// the store maps to ErrLockTimeout, while a plain context deadline stays context.DeadlineExceeded.
+func TestConnectionLevelLockTimeout(t *testing.T) {
+	admin := openDB(t)
+	table := newTable(t, admin)
+
+	cfg, err := pgx.ParseConfig(os.Getenv(dsnEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RuntimeParams["lock_timeout"] = "150ms"
+	bounded := stdlib.OpenDB(*cfg)
+	t.Cleanup(func() { _ = bounded.Close() })
+
+	s := newStore(t, bounded, table)
+	ctx := context.Background()
+	k := sequence.Key{Name: "hot"}
+
+	holder, err := admin.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback() //nolint:errcheck
+	if _, err := newStore(t, admin, table).WithTx(holder).Incr(ctx, k, "", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	_, err = s.Incr(ctx, k, "", 1)
+	if !errors.Is(err, sequence.ErrLockTimeout) {
+		t.Fatalf("err = %v, want ErrLockTimeout", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("a server lock timeout is not a context deadline")
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("took %v", time.Since(start))
 	}
 }
