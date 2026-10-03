@@ -27,3 +27,7 @@ jobs:
 
       - name: Run govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      - name: Run govulncheck (internal/integration)
+        working-directory: internal/integration
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
