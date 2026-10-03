@@ -30,6 +30,12 @@ jobs:
         with:
           version: v2.14.0
 
+      - name: Run golangci-lint (internal/integration)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          working-directory: internal/integration
+
   unit:
     name: Go ${{ matrix.go }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -81,14 +87,52 @@ jobs:
         run: |
           test "$(go list -m all | wc -l)" -eq 1
 
+      - name: Check internal/integration is tidy
+        working-directory: internal/integration
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
       - name: Lint changesets
         run: go run ./internal/cmd/changeset lint
+
+  # Real-database tests: a throwaway Postgres service container, GitHub-hosted, nothing external.
+  integration:
+    name: Integration (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seqtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      - name: Test against Postgres (race detector)
+        working-directory: internal/integration
+        env:
+          SEQ_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/seqtest?sslmode=disable
+        run: go test -race -count=1 -v ./...
 
   # One stable required check for branch protection. Matrix cell names change
   # over time, so protection requires this aggregator instead of each cell.
   tests:
     name: Tests
-    needs: [unit, tidy]
+    needs: [unit, tidy, integration]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +140,7 @@ jobs:
         env:
           UNIT: ${{ needs.unit.result }}
           TIDY: ${{ needs.tidy.result }}
+          INTEGRATION: ${{ needs.integration.result }}
         run: |
-          echo "unit=$UNIT tidy=$TIDY"
-          test "$UNIT" = "success" && test "$TIDY" = "success"
+          echo "unit=$UNIT tidy=$TIDY integration=$INTEGRATION"
+          test "$UNIT" = "success" && test "$TIDY" = "success" && test "$INTEGRATION" = "success"
