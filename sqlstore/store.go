@@ -28,7 +28,7 @@ type config struct {
 // WithTables sets the counter table name, bare or schema-qualified. Default: "sequences".
 func WithTables(sequences string) Option { return func(c *config) { c.table = sequences } }
 
-// RequireTx makes Incr return sequence.ErrNoTransaction unless the store is bound to a
+// RequireTx makes Incr and Set return sequence.ErrNoTransaction unless the store is bound to a
 // transaction (*sql.Tx), which guarantees gapless numbers: a rollback gives the number back.
 // A *sql.DB or *sql.Conn counts as not transactional. Detection is by capability: a DBTX that
 // cannot begin a transaction (no BeginTx method) is assumed to be one, so a custom wrapper
@@ -40,11 +40,16 @@ func RequireTx() Option { return func(c *config) { c.requireTx = true } }
 type Store struct {
 	db        DBTX
 	query     string
+	current   string
+	set       string
 	requireTx bool
 	inTx      bool
 }
 
-var _ sequence.Store = (*Store)(nil)
+var (
+	_ sequence.Store    = (*Store)(nil)
+	_ sequence.Resetter = (*Store)(nil)
+)
 
 // New returns a Store on db using dialect d. Configuration errors wrap
 // sequence.ErrInvalidConfig.
@@ -62,7 +67,7 @@ func New(db DBTX, d Dialect, opts ...Option) (*Store, error) {
 	if err := validateTable(cfg.table); err != nil {
 		return nil, err
 	}
-	return &Store{db: db, query: d.incrSQL(cfg.table), requireTx: cfg.requireTx, inTx: isTx(db)}, nil
+	return &Store{db: db, query: d.incrSQL(cfg.table), current: d.currentSQL(cfg.table), set: d.setSQL(cfg.table), requireTx: cfg.requireTx, inTx: isTx(db)}, nil
 }
 
 // WithTx returns a copy bound to tx, typically a *sql.Tx you manage. The receiver is
@@ -124,4 +129,44 @@ func mapError(ctx context.Context, k sequence.Key, period string, err error) err
 		return &sequence.ExhaustedError{Key: k, Period: period, Max: math.MaxInt64, Seq: math.MaxInt64}
 	}
 	return fmt.Errorf("sqlstore: incr: %w", err)
+}
+
+// Current implements sequence.Resetter. It is a plain read and is allowed on a pool even with
+// RequireTx.
+func (s *Store) Current(ctx context.Context, k sequence.Key, period string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	if s.db == nil {
+		return 0, false, fmt.Errorf("%w: store must not be bound to a nil DBTX", sequence.ErrInvalidConfig)
+	}
+	var counter int64
+	err := s.db.QueryRowContext(ctx, s.current, k.Name, k.Scope, period).Scan(&counter)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, mapError(ctx, k, period, err)
+	}
+	return counter, true, nil
+}
+
+// Set implements sequence.Resetter with one atomic upsert of an absolute value.
+func (s *Store) Set(ctx context.Context, k sequence.Key, period string, raw int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if raw < 0 {
+		return fmt.Errorf("%w: raw count must be >= 0, got %d", sequence.ErrInvalidConfig, raw)
+	}
+	if s.db == nil {
+		return fmt.Errorf("%w: store must not be bound to a nil DBTX", sequence.ErrInvalidConfig)
+	}
+	if s.requireTx && !s.inTx {
+		return sequence.ErrNoTransaction
+	}
+	if _, err := s.db.ExecContext(ctx, s.set, k.Name, k.Scope, period, raw); err != nil {
+		return mapError(ctx, k, period, err)
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -72,8 +73,34 @@ func (c *fakeConn) QueryContext(ctx context.Context, q string, args []driver.Nam
 		return nil, c.d.fail
 	}
 	key := [3]string{vals[0].(string), vals[1].(string), vals[2].(string)}
+	if strings.HasPrefix(q, "SELECT") {
+		v, ok := c.d.counters[key]
+		if !ok {
+			return &oneRow{done: true}, nil // no rows
+		}
+		return &oneRow{v: v}, nil
+	}
 	c.d.counters[key] += vals[3].(int64)
 	return &oneRow{v: c.d.counters[key]}, nil
+}
+
+// ExecContext handles the absolute-value upsert used by Store.Set.
+func (c *fakeConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	vals := make([]driver.Value, len(args))
+	for i, a := range args {
+		vals[i] = a.Value
+	}
+	c.d.queries, c.d.args = append(c.d.queries, q), append(c.d.args, vals)
+	if c.d.fail != nil {
+		return nil, c.d.fail
+	}
+	c.d.counters[[3]string{vals[0].(string), vals[1].(string), vals[2].(string)}] = vals[3].(int64)
+	return driver.RowsAffected(1), nil
 }
 
 type oneRow struct {

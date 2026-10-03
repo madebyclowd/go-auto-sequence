@@ -66,3 +66,21 @@ func TestOverflowDoesNotWrap(t *testing.T) {
 		t.Fatalf("counter moved to %d", got)
 	}
 }
+
+func TestResetterRoundTrip(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	k := sequence.Key{Name: "r"}
+	if _, ok, _ := s.Current(ctx, k, ""); ok {
+		t.Fatal("unknown partition must report ok=false")
+	}
+	if err := s.Set(ctx, k, "", 7); err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok, _ := s.Current(ctx, k, ""); !ok || raw != 7 || s.Peek(k, "") != 7 {
+		t.Fatalf("got (%d, %v)", raw, ok)
+	}
+	if err := s.Set(ctx, k, "", -1); !errors.Is(err, sequence.ErrInvalidConfig) {
+		t.Fatalf("err = %v", err)
+	}
+}

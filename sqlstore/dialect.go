@@ -31,3 +31,16 @@ func (d Dialect) incrSQL(table string) string {
 		"DO UPDATE SET counter = s.counter + EXCLUDED.counter, updated_at = now()\n" +
 		"RETURNING counter"
 }
+
+func (d Dialect) currentSQL(table string) string {
+	return "SELECT counter FROM " + table + " WHERE name = $1 AND scope = $2 AND period = $3"
+}
+
+// setSQL writes an absolute counter value; like incrSQL it is one atomic statement, so a
+// concurrent increment and a reset serialize on the row.
+func (d Dialect) setSQL(table string) string {
+	return "INSERT INTO " + table + " (name, scope, period, counter, updated_at)\n" +
+		"VALUES ($1, $2, $3, $4, now())\n" +
+		"ON CONFLICT (name, scope, period)\n" +
+		"DO UPDATE SET counter = EXCLUDED.counter, updated_at = now()"
+}

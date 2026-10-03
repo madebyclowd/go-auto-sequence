@@ -41,7 +41,8 @@ func newConfig(opts []Option) config {
 	return c
 }
 
-// Run executes the Incr conformance checks. newStore is called once per subtest.
+// Run executes the Incr conformance checks, plus the Resetter checks when the store implements
+// sequence.Resetter. newStore is called once per subtest.
 func Run(t *testing.T, newStore func(t *testing.T) sequence.Store, opts ...Option) {
 	t.Helper()
 	c := newConfig(opts)
@@ -54,4 +55,26 @@ func Run(t *testing.T, newStore func(t *testing.T) sequence.Store, opts ...Optio
 			}
 		})
 	}
+	runResetter(t, newStore, c)
+}
+
+// runResetter executes the Resetter checks for stores that implement sequence.Resetter; other
+// stores skip them.
+func runResetter(t *testing.T, newStore func(t *testing.T) sequence.Store, c config) {
+	t.Helper()
+	t.Run("Resetter", func(t *testing.T) {
+		if _, ok := newStore(t).(sequence.Resetter); !ok {
+			t.Skip("store does not implement sequence.Resetter")
+		}
+		for _, ck := range resetterChecks {
+			t.Run(ck.name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+				defer cancel()
+				s := newStore(t)
+				if err := ck.run(ctx, s.(sequence.Resetter), s); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	})
 }
