@@ -277,3 +277,90 @@ func TestMigrationIsIdempotent(t *testing.T) {
 		t.Fatalf("re-applying the migration failed: %v", err)
 	}
 }
+
+// The README quick-start, run for real: this is the code a new user copies.
+func TestQuickStart(t *testing.T) {
+	db := openDB(t)
+	table := newTable(t, db)
+
+	store, _ := sqlstore.New(db, sqlstore.Postgres, sqlstore.WithTables(table))
+	seq, _ := sequence.New(store)
+	format, _ := sequence.ParseFormat("INV-{YYYY}-{seq:5}")
+	invoice, _ := seq.Series("invoice", sequence.WithFormat(format), sequence.WithPeriod(sequence.Yearly))
+
+	n, err := invoice.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "INV-" + time.Now().UTC().Format("2006") + "-00001"
+	if n.Value != want {
+		t.Fatalf("got %q, want %q", n.Value, want)
+	}
+}
+
+// racyStore is a deliberately broken store: it reads the counter and writes it back in separate
+// statements, without a lock. It exists to prove the concurrency test has teeth: the same
+// assertion that passes for sqlstore must fail here.
+type racyStore struct {
+	db    *sql.DB
+	table string
+}
+
+func (r racyStore) Incr(ctx context.Context, k sequence.Key, period string, by int64) (int64, error) {
+	var cur int64
+	err := r.db.QueryRowContext(ctx, "SELECT counter FROM "+r.table+" WHERE name=$1 AND scope=$2 AND period=$3", k.Name, k.Scope, period).Scan(&cur)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	next := cur + by
+	_, err = r.db.ExecContext(ctx, "INSERT INTO "+r.table+" (name, scope, period, counter) VALUES ($1,$2,$3,$4) "+
+		"ON CONFLICT (name, scope, period) DO UPDATE SET counter = EXCLUDED.counter", k.Name, k.Scope, period, next)
+	return next, err
+}
+
+// issueConcurrently runs workers x each Next calls and reports whether the numbers were exactly 1..N.
+func issueConcurrently(t *testing.T, store sequence.Store, workers, each int) bool {
+	t.Helper()
+	seq, err := sequence.New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, _ := seq.Series("teeth")
+	var mu sync.Mutex
+	var all []int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range each {
+				n, err := series.Next(context.Background())
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				all = append(all, n.Seq)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	for i, v := range all {
+		if v != int64(i)+1 {
+			return false
+		}
+	}
+	return len(all) == workers*each
+}
+
+func TestConcurrencyTestHasTeeth(t *testing.T) {
+	db := openDB(t)
+	if !issueConcurrently(t, newStore(t, db, newTable(t, db)), 50, 20) {
+		t.Fatal("sqlstore must produce exactly 1..N")
+	}
+	if issueConcurrently(t, racyStore{db, newTable(t, db)}, 50, 20) {
+		t.Fatal("the broken store passed: the concurrency assertion has no teeth")
+	}
+}
