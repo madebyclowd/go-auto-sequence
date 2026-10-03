@@ -92,7 +92,7 @@ func TestRequireTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := s.WithTx(conn).Incr(ctx, k, "", 1); !errors.Is(err, sequence.ErrNoTransaction) {
 		t.Fatalf("*sql.Conn is not a transaction: err = %v", err)
 	}
