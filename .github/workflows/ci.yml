@@ -81,6 +81,9 @@ jobs:
         run: |
           test "$(go list -m all | wc -l)" -eq 1
 
+      - name: Lint changesets
+        run: go run ./internal/cmd/changeset lint
+
   # One stable required check for branch protection. Matrix cell names change
   # over time, so protection requires this aggregator instead of each cell.
   tests:
