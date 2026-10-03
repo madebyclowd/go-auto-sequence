@@ -12,6 +12,15 @@ cd go-auto-sequence
 go build ./...
 ```
 
+## Layout
+
+In Go a directory is a package, and tests sit next to the code they test (`key.go` and `key_test.go`); there is no `src/` or `tests/` folder.
+
+- The repository root is the public package `sequence`: `Key`, `Store`, `Series`, `Period`, the format DSL and the errors. These types depend on each other, so they stay together; the files are only organisation and callers never see them.
+- Sub-packages exist only for a real boundary: `memstore/`, `storetest/`, `sqlstore/`.
+- `internal/` is private to this module (the compiler enforces it), e.g. the changeset tool.
+- Tests of unexported names use `package sequence`; tests of the public API use `package sequence_test`.
+
 ## Running checks locally
 
 ```bash
