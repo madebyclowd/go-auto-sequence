@@ -37,7 +37,7 @@ func (g *good) Incr(ctx context.Context, k sequence.Key, p string, by int64) (in
 // racy reads, yields, then writes: a non-atomic read-modify-write.
 type racy struct{ *good }
 
-func (r racy) Incr(ctx context.Context, k sequence.Key, p string, by int64) (int64, error) {
+func (r racy) Incr(_ context.Context, k sequence.Key, p string, by int64) (int64, error) {
 	r.mu.Lock()
 	cur := r.m[r.key(k, p)]
 	r.mu.Unlock()

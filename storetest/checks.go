@@ -265,8 +265,12 @@ func checkContext(ctx context.Context, s sequence.Store, _ config) error {
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := s.Incr(cancelled, k, "", 1); !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("Incr with a cancelled ctx: err = %v, want errors.Is(err, context.Canceled)", err)
+	_, err := s.Incr(cancelled, k, "", 1)
+	if err == nil {
+		return errors.New("Incr with a cancelled ctx returned no error, want errors.Is(err, context.Canceled)")
+	}
+	if !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("Incr with a cancelled ctx: want errors.Is(err, context.Canceled), got: %w", err)
 	}
 	got, err := s.Incr(ctx, k, "", 1)
 	if err != nil {
