@@ -210,3 +210,16 @@ func (f *Format) Format(p Parts) (string, error) {
 
 // String returns the original template.
 func (f *Format) String() string { return f.src }
+
+// checkVars returns ErrMissingVar for the first {var:key} token that vars does not supply.
+func (f *Format) checkVars(vars map[string]string) error {
+	for _, s := range f.segs {
+		if s.kind != segVar {
+			continue
+		}
+		if _, ok := vars[s.text]; !ok {
+			return fmt.Errorf("%w: %q", ErrMissingVar, s.text)
+		}
+	}
+	return nil
+}
