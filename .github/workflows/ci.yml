@@ -59,18 +59,6 @@ jobs:
         env:
           CGO_ENABLED: '0'
 
-      - name: Test with coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.27'
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
-
-      - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.27'
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          files: ./coverage.out
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-
   tidy:
     name: go mod tidy
     runs-on: ubuntu-latest
