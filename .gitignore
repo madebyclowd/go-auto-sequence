@@ -1,0 +1,25 @@
+# Go workspace: local development only, never committed (release with GOWORK=off)
+go.work
+go.work.sum
+
+# Build and test output
+coverage.out
+coverage.xml
+*.test
+*.out
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local agent instructions and the symlinks into the agent-docs vault
+ai-docs
+ai-global-rules
+llms.txt
+CLAUDE.md
+AGENTS.md
+CLAUDE.local.md
+AGENTS.local.md
+.claude/

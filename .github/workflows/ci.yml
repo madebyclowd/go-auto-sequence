@@ -1,0 +1,110 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Lets version.yml run CI on the release PR branch (PRs opened with
+  # GITHUB_TOKEN do not trigger pull_request workflows).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+
+  unit:
+    name: Go ${{ matrix.go }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.22', '1.26', '1.27']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race detector, shuffled)
+        run: go test -race -shuffle=on -count=1 ./...
+
+      # The core is stdlib only and must build without cgo. (-race above needs cgo.)
+      - name: Build without cgo
+        run: go build ./...
+        env:
+          CGO_ENABLED: '0'
+
+      - name: Test with coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.27'
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.27'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  tidy:
+    name: go mod tidy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      - name: Check go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      # The root module must stay dependency-free: `go list -m all` prints only itself.
+      - name: Check the root module has no dependencies
+        run: |
+          test "$(go list -m all | wc -l)" -eq 1
+
+  # One stable required check for branch protection. Matrix cell names change
+  # over time, so protection requires this aggregator instead of each cell.
+  tests:
+    name: Tests
+    needs: [unit, tidy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test job to succeed
+        env:
+          UNIT: ${{ needs.unit.result }}
+          TIDY: ${{ needs.tidy.result }}
+        run: |
+          echo "unit=$UNIT tidy=$TIDY"
+          test "$UNIT" = "success" && test "$TIDY" = "success"

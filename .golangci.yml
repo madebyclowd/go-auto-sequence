@@ -1,0 +1,17 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - errorlint # enforces errors.Is/As and %w wrapping
+    - gocritic
+    - revive # exported-comment and naming rules
+
+formatters:
+  enable:
+    - gofmt
