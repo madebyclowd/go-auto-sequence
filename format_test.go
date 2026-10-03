@@ -114,7 +114,7 @@ func TestFormatStringAndAdapter(t *testing.T) {
 	}
 	var fm Formatter = f
 	_ = fm
-	fm = FormatFunc(func(p Parts) (string, error) { return "custom", nil })
+	fm = FormatFunc(func(Parts) (string, error) { return "custom", nil })
 	if got, _ := fm.Format(Parts{}); got != "custom" {
 		t.Fatal(got)
 	}
