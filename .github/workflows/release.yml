@@ -1,0 +1,49 @@
+name: create-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # version.yml dispatches this explicitly: tags pushed with GITHUB_TOKEN do not
+  # trigger the push event above.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      # Last gate before publishing.
+      - name: Build and test
+        run: |
+          go build ./...
+          go test ./...
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+
+      # Ask the module proxy for the version so pkg.go.dev indexes it promptly.
+      - name: Warm the Go module proxy
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          curl -fsS "https://proxy.golang.org/github.com/madebyclowd/go-auto-sequence/@v/${TAG}.info"
