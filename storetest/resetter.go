@@ -122,8 +122,12 @@ func checkSetIsolation(ctx context.Context, r sequence.Resetter, s sequence.Stor
 	if err := r.Set(ctx, base, "p", 99); err != nil {
 		return err
 	}
-	if raw, ok, err := r.Current(ctx, base, "p"); err != nil || !ok || raw != 99 {
-		return fmt.Errorf("Set must be readable from the same partition: Current = (%d, %v, %v), want (99, true, nil)", raw, ok, err)
+	raw, ok, err := r.Current(ctx, base, "p")
+	if err != nil {
+		return err
+	}
+	if !ok || raw != 99 {
+		return fmt.Errorf("Set must be readable from the same partition: Current = (%d, %v), want (99, true)", raw, ok)
 	}
 	for _, o := range other {
 		raw, _, err := r.Current(ctx, o.k, o.period)
@@ -144,15 +148,26 @@ func checkSetContext(ctx context.Context, r sequence.Resetter, s sequence.Store)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := r.Set(cancelled, k, "", 1); !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("Set with a cancelled ctx: err = %v, want errors.Is(err, context.Canceled)", err)
+	if err := wantCanceled("Set with a cancelled ctx", r.Set(cancelled, k, "", 1)); err != nil {
+		return err
 	}
-	if _, _, err := r.Current(cancelled, k, ""); !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("Current with a cancelled ctx: err = %v, want errors.Is(err, context.Canceled)", err)
+	_, _, curErr := r.Current(cancelled, k, "")
+	if err := wantCanceled("Current with a cancelled ctx", curErr); err != nil {
+		return err
 	}
 	raw, _, err := r.Current(ctx, k, "")
 	if err != nil {
 		return err
 	}
 	return expect("Current after a cancelled Set (counter must not move)", raw, 6)
+}
+
+func wantCanceled(what string, err error) error {
+	if err == nil {
+		return fmt.Errorf("%s: no error, want errors.Is(err, context.Canceled)", what)
+	}
+	if !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s: want errors.Is(err, context.Canceled), got: %w", what, err)
+	}
+	return nil
 }

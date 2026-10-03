@@ -170,7 +170,7 @@ func (s currentAlwaysOK) Current(ctx context.Context, k sequence.Key, p string) 
 
 type setAllowsNegative struct{ *good }
 
-func (s setAllowsNegative) Set(ctx context.Context, k sequence.Key, p string, raw int64) error {
+func (s setAllowsNegative) Set(_ context.Context, k sequence.Key, p string, raw int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.m[s.key(k, p)] = raw
