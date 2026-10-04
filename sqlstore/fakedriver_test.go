@@ -84,7 +84,8 @@ func (c *fakeConn) QueryContext(ctx context.Context, q string, args []driver.Nam
 	return &oneRow{v: c.d.counters[key]}, nil
 }
 
-// ExecContext handles the absolute-value upsert used by Store.Set.
+// ExecContext handles the MySQL-style increment (LAST_INSERT_ID) and the absolute-value upserts
+// used by Store.Set on every dialect.
 func (c *fakeConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -96,12 +97,27 @@ func (c *fakeConn) ExecContext(ctx context.Context, q string, args []driver.Name
 		vals[i] = a.Value
 	}
 	c.d.queries, c.d.args = append(c.d.queries, q), append(c.d.args, vals)
+	if c.d.hook != nil {
+		if err := c.d.hook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if c.d.fail != nil {
 		return nil, c.d.fail
 	}
-	c.d.counters[[3]string{vals[0].(string), vals[1].(string), vals[2].(string)}] = vals[3].(int64)
-	return driver.RowsAffected(1), nil
+	key := [3]string{vals[0].(string), vals[1].(string), vals[2].(string)}
+	if strings.Contains(q, "LAST_INSERT_ID") { // MySQL increment: the new counter comes back as LastInsertId
+		c.d.counters[key] += vals[3].(int64)
+		return fakeResult{lastID: c.d.counters[key]}, nil
+	}
+	c.d.counters[key] = vals[3].(int64)
+	return fakeResult{}, nil
 }
+
+type fakeResult struct{ lastID int64 }
+
+func (r fakeResult) LastInsertId() (int64, error) { return r.lastID, nil }
+func (r fakeResult) RowsAffected() (int64, error) { return 1, nil }
 
 type oneRow struct {
 	v    int64

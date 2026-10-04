@@ -108,9 +108,10 @@ jobs:
       - name: Lint changesets
         run: go run ./internal/cmd/changeset lint
 
-  # Real-database tests: a throwaway Postgres service container, GitHub-hosted, nothing external.
+  # Real-database tests: throwaway Postgres and MySQL service containers, GitHub-hosted, nothing
+  # external. SQLite needs no service (pure-Go driver, a file in a temp dir).
   integration:
-    name: Integration (Postgres)
+    name: Integration (databases)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -125,6 +126,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: seqtest
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmysql"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -134,10 +147,11 @@ jobs:
         with:
           go-version: stable
 
-      - name: Test against Postgres (race detector)
+      - name: Test against Postgres, MySQL and SQLite (race detector)
         working-directory: internal/integration
         env:
           SEQ_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/seqtest?sslmode=disable
+          SEQ_TEST_MYSQL_DSN: root:mysql@tcp(127.0.0.1:3306)/seqtest?parseTime=true
         run: go test -race -count=1 -v ./...
 
   # One stable required check for branch protection. Matrix cell names change

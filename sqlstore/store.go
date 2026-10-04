@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 
 	sequence "github.com/madebyclowd/go-auto-sequence"
 )
@@ -39,6 +38,7 @@ func RequireTx() Option { return func(c *config) { c.requireTx = true } }
 // use whenever its DBTX is.
 type Store struct {
 	db        DBTX
+	dialect   Dialect
 	query     string
 	current   string
 	set       string
@@ -67,7 +67,7 @@ func New(db DBTX, d Dialect, opts ...Option) (*Store, error) {
 	if err := validateTable(cfg.table); err != nil {
 		return nil, err
 	}
-	return &Store{db: db, query: d.incrSQL(cfg.table), current: d.currentSQL(cfg.table), set: d.setSQL(cfg.table), requireTx: cfg.requireTx, inTx: isTx(db)}, nil
+	return &Store{db: db, dialect: d, query: d.incrSQL(cfg.table), current: d.currentSQL(cfg.table), set: d.setSQL(cfg.table), requireTx: cfg.requireTx, inTx: isTx(db)}, nil
 }
 
 // WithTx returns a copy bound to tx, typically a *sql.Tx you manage. The receiver is
@@ -105,34 +105,22 @@ func (s *Store) Incr(ctx context.Context, k sequence.Key, period string, by int6
 	if s.requireTx && !s.inTx {
 		return 0, sequence.ErrNoTransaction
 	}
+	if !s.dialect.returning() {
+		res, err := s.db.ExecContext(ctx, s.query, s.dialect.incrArgs(k.Name, k.Scope, period, by)...)
+		if err != nil {
+			return 0, s.mapError(ctx, k, period, err)
+		}
+		counter, err := res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("sqlstore: incr: %w", err)
+		}
+		return counter, nil
+	}
 	var counter int64
-	if err := s.db.QueryRowContext(ctx, s.query, k.Name, k.Scope, period, by).Scan(&counter); err != nil {
-		return 0, mapError(ctx, k, period, err)
+	if err := s.db.QueryRowContext(ctx, s.query, s.dialect.incrArgs(k.Name, k.Scope, period, by)...).Scan(&counter); err != nil {
+		return 0, s.mapError(ctx, k, period, err)
 	}
 	return counter, nil
-}
-
-// mapError turns driver errors into the library's sentinels without importing a driver.
-// Drivers expose the SQLSTATE through SQLState() (pgx's *pgconn.PgError and lib/pq's *pq.Error).
-func mapError(ctx context.Context, k sequence.Key, period string, err error) error {
-	var coded interface{ SQLState() string }
-	if !errors.As(err, &coded) {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
-		return fmt.Errorf("sqlstore: incr: %w", err)
-	}
-	switch coded.SQLState() {
-	case "55P03": // lock_not_available
-		return fmt.Errorf("%w: %w", sequence.ErrLockTimeout, err)
-	case "57014": // query_canceled: a deadline hit while waiting on the row lock
-		if cerr := ctx.Err(); cerr != nil {
-			return fmt.Errorf("%w: %w: %w", sequence.ErrLockTimeout, cerr, err)
-		}
-	case "22003": // numeric_value_out_of_range: bigint overflow
-		return &sequence.ExhaustedError{Key: k, Period: period, Max: math.MaxInt64, Seq: math.MaxInt64}
-	}
-	return fmt.Errorf("sqlstore: incr: %w", err)
 }
 
 // Current implements sequence.Resetter. It is a plain read and is allowed on a pool even with
@@ -150,7 +138,7 @@ func (s *Store) Current(ctx context.Context, k sequence.Key, period string) (int
 		return 0, false, nil
 	}
 	if err != nil {
-		return 0, false, mapError(ctx, k, period, err)
+		return 0, false, s.mapError(ctx, k, period, err)
 	}
 	return counter, true, nil
 }
@@ -169,8 +157,8 @@ func (s *Store) Set(ctx context.Context, k sequence.Key, period string, raw int6
 	if s.requireTx && !s.inTx {
 		return sequence.ErrNoTransaction
 	}
-	if _, err := s.db.ExecContext(ctx, s.set, k.Name, k.Scope, period, raw); err != nil {
-		return mapError(ctx, k, period, err)
+	if _, err := s.db.ExecContext(ctx, s.set, s.dialect.setArgs(k.Name, k.Scope, period, raw)...); err != nil {
+		return s.mapError(ctx, k, period, err)
 	}
 	return nil
 }

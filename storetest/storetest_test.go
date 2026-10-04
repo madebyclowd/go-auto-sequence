@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -225,4 +226,35 @@ type incrOnly struct{ g *good }
 
 func (s incrOnly) Incr(ctx context.Context, k sequence.Key, p string, by int64) (int64, error) {
 	return s.g.Incr(ctx, k, p, by)
+}
+
+// caseInsensitive folds case and trims trailing spaces, like a default MySQL collation.
+type caseInsensitive struct{ *good }
+
+func fold(k sequence.Key, p string) (sequence.Key, string) {
+	k.Name, k.Scope = strings.ToLower(strings.TrimRight(k.Name, " ")), strings.ToLower(strings.TrimRight(k.Scope, " "))
+	return k, strings.ToLower(strings.TrimRight(p, " "))
+}
+
+func (s caseInsensitive) Incr(ctx context.Context, k sequence.Key, p string, by int64) (int64, error) {
+	k, p = fold(k, p)
+	return s.good.Incr(ctx, k, p, by)
+}
+
+func TestCaseCheckCatchesCollationBugs(t *testing.T) {
+	var run check
+	for _, ck := range coreChecks {
+		if ck.name == "CaseAndWhitespaceSensitive" {
+			run = ck.run
+		}
+	}
+	if run == nil {
+		t.Fatal("check missing")
+	}
+	if err := run(context.Background(), newGood(), newConfig(nil)); err != nil {
+		t.Fatalf("a correct store must pass: %v", err)
+	}
+	if err := run(context.Background(), caseInsensitive{newGood()}, newConfig(nil)); err == nil {
+		t.Fatal("a case-insensitive store must fail the check")
+	}
 }
