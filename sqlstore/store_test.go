@@ -277,3 +277,22 @@ func TestSetAndCurrentContext(t *testing.T) {
 		t.Errorf("Current: %v", err)
 	}
 }
+
+func TestInTx(t *testing.T) {
+	db, _ := newFakeDB(t)
+	s, _ := sqlstore.New(db, sqlstore.Postgres)
+	if s.InTx() {
+		t.Fatal("a pool-bound store is not in a transaction")
+	}
+	tx, _ := db.BeginTx(context.Background(), nil)
+	defer tx.Rollback() //nolint:errcheck
+	if !s.WithTx(tx).InTx() || s.InTx() {
+		t.Fatal("WithTx must return a transaction-bound copy and leave the receiver alone")
+	}
+	if _, err := sequence.Prefetch(s.WithTx(tx), 10); !errors.Is(err, sequence.ErrPrefetchInTx) {
+		t.Fatalf("Prefetch of a tx-bound sqlstore: %v", err)
+	}
+	if _, err := sequence.Prefetch(s, 10); err != nil {
+		t.Fatalf("Prefetch of a pool-bound sqlstore: %v", err)
+	}
+}
