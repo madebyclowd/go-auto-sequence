@@ -17,7 +17,8 @@ const maxReserve = 1 << 20
 // apply as for Next. The counter advances before the numbers are rendered, so if rendering fails
 // (a custom Formatter error) the whole range is consumed; on a transaction-bound store a rollback
 // gives it back, on a pool-bound store it is a gap. Missing {var:} values of a *Format are caught
-// before the counter moves.
+// before the counter moves. With WithMax, a range that would pass the maximum returns an
+// *ExhaustedError and issues nothing, but the range is consumed like any failed call.
 func (s *Series) Reserve(ctx context.Context, n int, opts ...CallOption) ([]Number, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("%w: store must not be nil", ErrInvalidConfig)
@@ -45,14 +46,21 @@ func (s *Series) Reserve(ctx context.Context, n int, opts ...CallOption) ([]Numb
 		return nil, &ExhaustedError{Key: key, Period: period, Max: math.MaxInt64, Seq: end}
 	}
 
+	firstSeq := s.start + (first - 1)
+	lastSeq := firstSeq + int64(n) - 1
+	if err := s.checkMax(key, period, lastSeq); err != nil {
+		return nil, err
+	}
+
 	out := make([]Number, 0, n)
 	for i := range n {
-		seq := s.start + (first - 1) + int64(i)
+		seq := firstSeq + int64(i)
 		value, err := s.format.Format(Parts{Key: key, Period: period, Seq: seq, At: at, Vars: cfg.vars})
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, Number{Value: value, Seq: seq, Period: period, Key: key})
 	}
+	s.notify(ctx, key, period, firstSeq, lastSeq)
 	return out, nil
 }

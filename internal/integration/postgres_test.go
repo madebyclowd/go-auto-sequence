@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -543,5 +544,57 @@ func TestReserveOnPostgres(t *testing.T) {
 	}
 	if n, err := s.Next(ctx); err != nil || n.Seq != 2001 {
 		t.Fatalf("after rollback got %+v, %v; the reserved block must be given back", n, err)
+	}
+}
+
+// On a real database: the series stops at max, never issues past it, and the exhaustion handler
+// fires exactly once at the threshold even with 100 goroutines racing.
+func TestMaxAndExhaustionHandlerOnPostgres(t *testing.T) {
+	db := openDB(t)
+	var calls atomic.Int64
+	seq, _ := sequence.New(newStore(t, db, newTable(t, db)),
+		sequence.WithExhaustionHandler(func(context.Context, sequence.Exhaustion) { calls.Add(1) }))
+	s, _ := seq.Series("capped", sequence.WithMax(600, 50))
+
+	var mu sync.Mutex
+	issued := map[int64]bool{}
+	var exhausted atomic.Int64
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 8 { // 800 attempts for 600 numbers
+				n, err := s.Next(context.Background())
+				switch {
+				case err == nil:
+					mu.Lock()
+					if issued[n.Seq] {
+						t.Errorf("duplicate %d", n.Seq)
+					}
+					issued[n.Seq] = true
+					mu.Unlock()
+				case errors.Is(err, sequence.ErrExhausted):
+					exhausted.Add(1)
+				default:
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if len(issued) != 600 || exhausted.Load() != 200 {
+		t.Fatalf("issued %d numbers and %d exhausted errors, want 600 and 200", len(issued), exhausted.Load())
+	}
+	for i := int64(1); i <= 600; i++ {
+		if !issued[i] {
+			t.Fatalf("gap at %d", i)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want exactly 1", calls.Load())
+	}
+	if last, issuedAny, err := s.Current(context.Background()); err != nil || !issuedAny || last != 600 {
+		t.Fatalf("Current = (%d, %v, %v), want (600, true, nil)", last, issuedAny, err)
 	}
 }

@@ -9,6 +9,9 @@ type seriesConfig struct {
 	period       Period
 	start        int64
 	requireScope bool
+	max          int64
+	thresholdPct int
+	maxSet       bool
 }
 
 // WithFormat sets how numbers are rendered. Default: the template "{seq}".
@@ -25,3 +28,12 @@ func WithStart(n int64) SeriesOption { return func(c *seriesConfig) { c.start = 
 // RequireScope makes a call without a non-empty WithScope return ErrScopeRequired, so a
 // forgotten scope can never silently use the global counter.
 func RequireScope() SeriesOption { return func(c *seriesConfig) { c.requireScope = true } }
+
+// WithMax caps the series at maxVal (a visible sequence value) and sets the exhaustion warning
+// threshold as a percentage (1..100) of the numbers between the start value and maxVal. A call
+// that would issue a value above maxVal returns an *ExhaustedError (matching ErrExhausted). The
+// exhaustion handler, if any, is notified when an issued number crosses the threshold.
+// maxVal must be >= the start value.
+func WithMax(maxVal int64, thresholdPercent int) SeriesOption {
+	return func(c *seriesConfig) { c.max, c.thresholdPct, c.maxSet = maxVal, thresholdPercent, true }
+}
