@@ -12,8 +12,14 @@ requests arrive in the same second.
 It works with any Go project: the standard library's `database/sql`, GORM, sqlx, bun, sqlc. It does
 not depend on a web framework or an ORM.
 
-> **Status: v0, pre-release.** Nothing is published yet (there is no tag), and the API may change in
-> minor releases until v1.0.0.
+> **Status: v0.1.0, the first pre-release.** The API may change in minor releases until v1.0.0.
+> It has not yet been used by a real application, which is the gate to v1.0.0.
+
+Install:
+
+```bash
+go get github.com/madebyclowd/go-auto-sequence@latest
+```
 
 ```go
 import "github.com/madebyclowd/go-auto-sequence" // package name: sequence
