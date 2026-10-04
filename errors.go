@@ -12,6 +12,7 @@ var (
 	ErrNoTransaction = errors.New("sequence: store not bound to a transaction")
 	ErrScopeRequired = errors.New("sequence: scope required for this series")
 	ErrPeriodTooLong = errors.New("sequence: period key too long")
+	ErrPrefetchInTx  = errors.New("sequence: prefetch cannot wrap a transaction-bound store")
 	ErrInvalidConfig = errors.New("sequence: invalid configuration")
 	ErrInvalidFormat = errors.New("sequence: invalid format template")
 	ErrMissingVar    = errors.New("sequence: template variable not supplied")

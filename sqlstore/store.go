@@ -78,6 +78,10 @@ func (s *Store) WithTx(tx DBTX) *Store {
 	return &c
 }
 
+// InTx reports whether the store is bound to a transaction (see WithTx). sequence.Prefetch uses
+// it to refuse a transaction-bound store, which cannot be gapless once numbers are cached.
+func (s *Store) InTx() bool { return s.inTx }
+
 // isTx reports whether db is a transaction. Pools (*sql.DB) and connections (*sql.Conn) can
 // begin a transaction; a *sql.Tx cannot.
 func isTx(db DBTX) bool {

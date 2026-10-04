@@ -598,3 +598,77 @@ func TestMaxAndExhaustionHandlerOnPostgres(t *testing.T) {
 		t.Fatalf("Current = (%d, %v, %v), want (600, true, nil)", last, issuedAny, err)
 	}
 }
+
+type countingStore struct {
+	sequence.Store
+	calls atomic.Int64
+}
+
+func (c *countingStore) Incr(ctx context.Context, k sequence.Key, p string, by int64) (int64, error) {
+	c.calls.Add(1)
+	return c.Store.Incr(ctx, k, p, by)
+}
+
+// Prefetch on a real database: far fewer round trips, and two "processes" (two Prefetch instances
+// on the same table) never hand out the same number, though each holds its own block.
+func TestPrefetchOnPostgres(t *testing.T) {
+	db := openDB(t)
+	table := newTable(t, db)
+	pool := newStore(t, db, table)
+	inner := &countingStore{Store: pool}
+
+	mk := func(st sequence.Store) *sequence.Series {
+		p, err := sequence.Prefetch(st, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seq, _ := sequence.New(p)
+		s, _ := seq.Series("fast")
+		return s
+	}
+	a, b := mk(inner), mk(&countingStore{Store: pool})
+
+	var mu sync.Mutex
+	seen := map[int64]bool{}
+	var wg sync.WaitGroup
+	for g := range 60 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := a
+			if g%2 == 1 {
+				s = b
+			}
+			for range 50 {
+				n, err := s.Next(context.Background())
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				if seen[n.Seq] {
+					t.Errorf("duplicate %d across instances", n.Seq)
+				}
+				seen[n.Seq] = true
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if len(seen) != 60*50 {
+		t.Fatalf("issued %d distinct numbers, want %d", len(seen), 60*50)
+	}
+	if got := inner.calls.Load(); got != 30 { // instance a served 30 goroutines x 50 = 1500 numbers in blocks of 50
+		t.Fatalf("instance a made %d round trips, want exactly 30 for 1500 numbers in blocks of 50", got)
+	}
+
+	// A transaction-bound store cannot be prefetched.
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := sequence.Prefetch(pool.WithTx(tx), 50); !errors.Is(err, sequence.ErrPrefetchInTx) {
+		t.Fatalf("err = %v, want ErrPrefetchInTx", err)
+	}
+}
