@@ -208,3 +208,72 @@ func TestMigrationsAndSchema(t *testing.T) {
 		t.Error("unknown dialect must return nil")
 	}
 }
+
+func TestCurrentAndSet(t *testing.T) {
+	db, d := newFakeDB(t)
+	s, _ := sqlstore.New(db, sqlstore.Postgres, sqlstore.WithTables("app.seqs"))
+	ctx := context.Background()
+	k := sequence.Key{Name: "inv", Scope: "t1"}
+
+	if raw, ok, err := s.Current(ctx, k, "2026"); err != nil || ok || raw != 0 {
+		t.Fatalf("empty: (%d, %v, %v)", raw, ok, err)
+	}
+	if err := s.Set(ctx, k, "2026", 41); err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok, err := s.Current(ctx, k, "2026"); err != nil || !ok || raw != 41 {
+		t.Fatalf("after Set: (%d, %v, %v)", raw, ok, err)
+	}
+	if got, err := s.Incr(ctx, k, "2026", 1); err != nil || got != 42 {
+		t.Fatalf("Incr after Set: %d, %v", got, err)
+	}
+	var sel, set string
+	for _, q := range d.queries {
+		switch {
+		case strings.HasPrefix(q, "SELECT"):
+			sel = q
+		case strings.Contains(q, "counter = EXCLUDED.counter"):
+			set = q
+		}
+	}
+	if !strings.Contains(sel, "FROM app.seqs WHERE name = $1 AND scope = $2 AND period = $3") {
+		t.Errorf("select statement: %s", sel)
+	}
+	if !strings.Contains(set, "INSERT INTO app.seqs") || !strings.Contains(set, "ON CONFLICT (name, scope, period)") {
+		t.Errorf("set statement: %s", set)
+	}
+	if err := s.Set(ctx, k, "2026", -1); !errors.Is(err, sequence.ErrInvalidConfig) {
+		t.Errorf("negative raw: %v", err)
+	}
+}
+
+func TestSetHonoursRequireTxButCurrentDoesNot(t *testing.T) {
+	db, _ := newFakeDB(t)
+	s, _ := sqlstore.New(db, sqlstore.Postgres, sqlstore.RequireTx())
+	ctx := context.Background()
+	k := sequence.Key{Name: "x"}
+	if err := s.Set(ctx, k, "", 1); !errors.Is(err, sequence.ErrNoTransaction) {
+		t.Fatalf("Set on a pool: %v", err)
+	}
+	if _, _, err := s.Current(ctx, k, ""); err != nil {
+		t.Fatalf("Current is a read and must work on a pool: %v", err)
+	}
+	tx, _ := db.BeginTx(ctx, nil)
+	defer tx.Rollback() //nolint:errcheck
+	if err := s.WithTx(tx).Set(ctx, k, "", 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetAndCurrentContext(t *testing.T) {
+	db, _ := newFakeDB(t)
+	s, _ := sqlstore.New(db, sqlstore.Postgres)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Set(cancelled, sequence.Key{Name: "x"}, "", 1); !errors.Is(err, context.Canceled) {
+		t.Errorf("Set: %v", err)
+	}
+	if _, _, err := s.Current(cancelled, sequence.Key{Name: "x"}, ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("Current: %v", err)
+	}
+}

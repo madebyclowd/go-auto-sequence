@@ -406,3 +406,83 @@ func TestConnectionLevelLockTimeout(t *testing.T) {
 		t.Fatalf("took %v", time.Since(start))
 	}
 }
+
+func TestSeriesCurrentAndReset(t *testing.T) {
+	db := openDB(t)
+	pool := newStore(t, db, newTable(t, db))
+	seq, _ := sequence.New(pool)
+	ctx := context.Background()
+	s, _ := seq.Series("inv", sequence.WithStart(1000))
+
+	if _, issued, err := s.Current(ctx); err != nil || issued {
+		t.Fatalf("empty: issued=%v err=%v", issued, err)
+	}
+	for range 3 {
+		if _, err := s.Next(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if last, issued, err := s.Current(ctx); err != nil || !issued || last != 1002 {
+		t.Fatalf("Current = (%d, %v, %v), want (1002, true)", last, issued, err)
+	}
+	if err := s.Reset(ctx, 5000); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Next(ctx); err != nil || n.Seq != 5000 {
+		t.Fatalf("after Reset(5000): %+v, %v", n, err)
+	}
+	if err := s.Reset(ctx, 999); !errors.Is(err, sequence.ErrInvalidConfig) {
+		t.Fatalf("below start: %v", err)
+	}
+
+	// A Reset inside the caller's transaction is undone by a rollback.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WithStore(pool.WithTx(tx)).Reset(ctx, 9000); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if last, _, err := s.Current(ctx); err != nil || last != 5000 {
+		t.Fatalf("after rolled-back Reset: last=%d err=%v, want 5000", last, err)
+	}
+}
+
+// Concurrent Next calls interleaved with Reset must never panic or error, and numbers handed out
+// between two resets stay unique.
+func TestResetUnderConcurrentNext(t *testing.T) {
+	db := openDB(t)
+	seq, _ := sequence.New(newStore(t, db, newTable(t, db)))
+	s, _ := seq.Series("busy")
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, err := s.Next(ctx); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 20; i++ {
+		if err := s.Reset(ctx, 1); err != nil {
+			t.Error(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+}

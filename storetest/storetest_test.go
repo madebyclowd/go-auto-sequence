@@ -34,6 +34,29 @@ func (g *good) Incr(ctx context.Context, k sequence.Key, p string, by int64) (in
 	return g.m[g.key(k, p)], nil
 }
 
+func (g *good) Current(ctx context.Context, k sequence.Key, p string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	v, ok := g.m[g.key(k, p)]
+	return v, ok, nil
+}
+
+func (g *good) Set(ctx context.Context, k sequence.Key, p string, raw int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if raw < 0 {
+		return fmt.Errorf("raw must be >= 0")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.m[g.key(k, p)] = raw
+	return nil
+}
+
 // racy reads, yields, then writes: a non-atomic read-modify-write.
 type racy struct{ *good }
 
@@ -122,4 +145,84 @@ func TestChecksCatchBrokenStores(t *testing.T) {
 			t.Errorf("%s: check %s did not catch the broken store", tc.name, tc.check)
 		}
 	}
+}
+
+// Broken Resetters: each must be caught by the named check.
+type setIgnoresScope struct{ *good }
+
+func (s setIgnoresScope) Set(ctx context.Context, k sequence.Key, p string, raw int64) error {
+	k.Scope = ""
+	return s.good.Set(ctx, k, p, raw)
+}
+
+type setIsSeparate struct{ *good } // Set writes somewhere Incr never looks
+
+func (s setIsSeparate) Set(ctx context.Context, k sequence.Key, p string, raw int64) error {
+	return s.good.Set(ctx, sequence.Key{Name: k.Name + "#shadow", Scope: k.Scope}, p, raw)
+}
+
+type currentAlwaysOK struct{ *good }
+
+func (s currentAlwaysOK) Current(ctx context.Context, k sequence.Key, p string) (int64, bool, error) {
+	v, _, err := s.good.Current(ctx, k, p)
+	return v, true, err
+}
+
+type setAllowsNegative struct{ *good }
+
+func (s setAllowsNegative) Set(_ context.Context, k sequence.Key, p string, raw int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[s.key(k, p)] = raw
+	return nil
+}
+
+type setAdvancesOnCancel struct{ *good }
+
+func (s setAdvancesOnCancel) Set(ctx context.Context, k sequence.Key, p string, raw int64) error {
+	_ = s.good.Set(context.Background(), k, p, raw)
+	return ctx.Err()
+}
+
+func TestResetterChecksPassOnGoodStore(t *testing.T) {
+	Run(t, func(*testing.T) sequence.Store { return newGood() })
+}
+
+func TestResetterChecksCatchBrokenStores(t *testing.T) {
+	cases := []struct {
+		name  string
+		store sequence.Store
+		check string
+	}{
+		{"set ignores scope", setIgnoresScope{newGood()}, "SetIsolation"},
+		{"set is separate from incr", setIsSeparate{newGood()}, "SetThenIncrContinuesFromValue"},
+		{"current always ok", currentAlwaysOK{newGood()}, "CurrentOfUnknownPartition"},
+		{"set allows negative", setAllowsNegative{newGood()}, "SetRejectsNegative"},
+		{"set advances on cancelled ctx", setAdvancesOnCancel{newGood()}, "SetContext"},
+	}
+	for _, tc := range cases {
+		var run func(context.Context, sequence.Resetter, sequence.Store) error
+		for _, ck := range resetterChecks {
+			if ck.name == tc.check {
+				run = ck.run
+			}
+		}
+		if run == nil {
+			t.Fatalf("%s: no check named %s", tc.name, tc.check)
+		}
+		if err := run(context.Background(), tc.store.(sequence.Resetter), tc.store); err == nil {
+			t.Errorf("%s: check %s did not catch the broken store", tc.name, tc.check)
+		}
+	}
+}
+
+func TestStoreWithoutResetterSkipsResetterChecks(t *testing.T) {
+	Run(t, func(*testing.T) sequence.Store { return incrOnly{newGood()} })
+}
+
+// incrOnly hides the Resetter methods, like a third-party store that only implements Incr.
+type incrOnly struct{ g *good }
+
+func (s incrOnly) Incr(ctx context.Context, k sequence.Key, p string, by int64) (int64, error) {
+	return s.g.Incr(ctx, k, p, by)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"time"
 )
 
 // Series is a named counter with a format, a period and a start value. It is immutable and
@@ -70,26 +71,9 @@ func (s *Series) Next(ctx context.Context, opts ...CallOption) (Number, error) {
 		return Number{}, fmt.Errorf("%w: store must not be nil", ErrInvalidConfig)
 	}
 	cfg := newCallConfig(opts)
-	if cfg.atSet && cfg.at.IsZero() {
-		return Number{}, fmt.Errorf("%w: At time must not be the zero time", ErrInvalidConfig)
-	}
-	if s.requireScope && cfg.scope == "" {
-		return Number{}, fmt.Errorf("%w: series %q", ErrScopeRequired, s.name)
-	}
-	key := Key{Name: s.name, Scope: cfg.scope}
-	if err := key.validate(); err != nil {
+	key, period, at, err := s.resolve(cfg)
+	if err != nil {
 		return Number{}, err
-	}
-
-	at := cfg.at
-	if !cfg.atSet {
-		at = s.seq.clock()
-	}
-	at = at.In(s.seq.loc)
-
-	period := s.period(at)
-	if len(period) > maxPeriodLen {
-		return Number{}, fmt.Errorf("%w: %d bytes, limit %d", ErrPeriodTooLong, len(period), maxPeriodLen)
 	}
 
 	if f, ok := s.format.(*Format); ok {
@@ -112,4 +96,28 @@ func (s *Series) Next(ctx context.Context, opts ...CallOption) (Number, error) {
 		return Number{}, err
 	}
 	return Number{Value: value, Seq: seq, Period: period, Key: key}, nil
+}
+
+// resolve validates the per-call input and works out the counter partition and the issue time.
+func (s *Series) resolve(cfg callConfig) (key Key, period string, at time.Time, err error) {
+	if cfg.atSet && cfg.at.IsZero() {
+		return Key{}, "", time.Time{}, fmt.Errorf("%w: At time must not be the zero time", ErrInvalidConfig)
+	}
+	if s.requireScope && cfg.scope == "" {
+		return Key{}, "", time.Time{}, fmt.Errorf("%w: series %q", ErrScopeRequired, s.name)
+	}
+	key = Key{Name: s.name, Scope: cfg.scope}
+	if err := key.validate(); err != nil {
+		return Key{}, "", time.Time{}, err
+	}
+	at = cfg.at
+	if !cfg.atSet {
+		at = s.seq.clock()
+	}
+	at = at.In(s.seq.loc)
+	period = s.period(at)
+	if len(period) > maxPeriodLen {
+		return Key{}, "", time.Time{}, fmt.Errorf("%w: %d bytes, limit %d", ErrPeriodTooLong, len(period), maxPeriodLen)
+	}
+	return key, period, at, nil
 }

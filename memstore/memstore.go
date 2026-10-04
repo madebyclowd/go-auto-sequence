@@ -24,6 +24,11 @@ type Store struct {
 	m  map[entry]int64
 }
 
+var (
+	_ sequence.Store    = (*Store)(nil)
+	_ sequence.Resetter = (*Store)(nil)
+)
+
 // New returns an empty Store.
 func New() *Store { return &Store{m: make(map[entry]int64)} }
 
@@ -45,6 +50,31 @@ func (s *Store) Incr(ctx context.Context, k sequence.Key, period string, by int6
 	cur += by
 	s.m[e] = cur
 	return cur, nil
+}
+
+// Current implements sequence.Resetter.
+func (s *Store) Current(ctx context.Context, k sequence.Key, period string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.m[entry{k, period}]
+	return v, ok, nil
+}
+
+// Set implements sequence.Resetter.
+func (s *Store) Set(ctx context.Context, k sequence.Key, period string, raw int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if raw < 0 {
+		return fmt.Errorf("%w: raw count must be >= 0, got %d", sequence.ErrInvalidConfig, raw)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[entry{k, period}] = raw
+	return nil
 }
 
 // Peek returns the current raw count for (k, period), or 0 if it was never incremented.
