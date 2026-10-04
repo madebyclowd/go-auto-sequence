@@ -35,8 +35,14 @@ The snippet above runs as a test against a real PostgreSQL (`internal/integratio
 
 For tests and single-process use, `memstore.New()` replaces the database store.
 
-**Not built yet:** MySQL, SQLite, `Reserve`, `Reset`/`Current`, `WithMax` and exhaustion
-notifications, `Prefetch`. Number recycling and step increments are deliberately not part of v1.
+**Databases:** PostgreSQL, MySQL 8+ and SQLite 3.35+ (`sqlstore.Postgres`, `sqlstore.MySQL`,
+`sqlstore.SQLite`), tested against real servers in CI. For SQLite open write transactions with
+`BEGIN IMMEDIATE` (DSN `_txlock=immediate`). Create the table with `sqlstore.Migrations` or
+`sqlstore.Schema`; on MySQL use that SQL, it sets a binary collation so `Invoice` and `invoice`
+stay different counters.
+
+**Also included:** `Reserve`, `Current`/`Reset`, `WithMax` with an exhaustion handler, `Prefetch`,
+and `seqtest` for your own tests. Number recycling and step increments are deliberately not part of v1.
 
 ## License
 

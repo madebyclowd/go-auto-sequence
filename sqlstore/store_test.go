@@ -3,6 +3,7 @@ package sqlstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -15,14 +16,18 @@ import (
 
 // The fake driver proves the adapter plumbing, not SQL semantics (see fakedriver_test.go).
 func TestConformanceAgainstFakeDriver(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) sequence.Store {
-		db, _ := newFakeDB(t)
-		s, err := sqlstore.New(db, sqlstore.Postgres)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return s
-	})
+	for _, d := range []sqlstore.Dialect{sqlstore.Postgres, sqlstore.MySQL, sqlstore.SQLite} {
+		t.Run(d.String(), func(t *testing.T) {
+			storetest.Run(t, func(t *testing.T) sequence.Store {
+				db, _ := newFakeDB(t)
+				s, err := sqlstore.New(db, d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return s
+			})
+		})
+	}
 }
 
 func TestStatementAndArguments(t *testing.T) {
@@ -294,5 +299,125 @@ func TestInTx(t *testing.T) {
 	}
 	if _, err := sequence.Prefetch(s, 10); err != nil {
 		t.Fatalf("Prefetch of a pool-bound sqlstore: %v", err)
+	}
+}
+
+func TestDialectStatements(t *testing.T) {
+	cases := []struct {
+		d        sqlstore.Dialect
+		incr     []string
+		wantArgs []any
+	}{
+		{sqlstore.Postgres, []string{"INSERT INTO app.seqs AS s", "$4", "RETURNING counter"}, []any{"inv", "t1", "2026", int64(3)}},
+		{sqlstore.SQLite, []string{"INSERT INTO app.seqs AS s", "VALUES (?, ?, ?, ?)", "excluded.counter", "RETURNING counter"}, []any{"inv", "t1", "2026", int64(3)}},
+		{sqlstore.MySQL, []string{"INSERT INTO app.seqs (name, scope, period, counter)", "LAST_INSERT_ID(?)", "ON DUPLICATE KEY UPDATE counter = LAST_INSERT_ID(counter + ?)"}, []any{"inv", "t1", "2026", int64(3), int64(3)}},
+	}
+	for _, c := range cases {
+		db, d := newFakeDB(t)
+		s, _ := sqlstore.New(db, c.d, sqlstore.WithTables("app.seqs"))
+		got, err := s.Incr(context.Background(), sequence.Key{Name: "inv", Scope: "t1"}, "2026", 3)
+		if err != nil || got != 3 {
+			t.Fatalf("%v: got %d, %v", c.d, got, err)
+		}
+		for _, want := range c.incr {
+			if !strings.Contains(d.queries[0], want) {
+				t.Errorf("%v statement lacks %q:\n%s", c.d, want, d.queries[0])
+			}
+		}
+		if strings.Contains(d.queries[0], "VALUES(counter)") || strings.Contains(d.queries[0], "values(counter)") {
+			t.Errorf("%v: the deprecated VALUES() function must not be used", c.d)
+		}
+		if fmt.Sprint(d.args[0]) != fmt.Sprint(c.wantArgs) {
+			t.Errorf("%v args = %v, want %v", c.d, d.args[0], c.wantArgs)
+		}
+	}
+}
+
+// Error classes the way real drivers present them: the text of go-sql-driver/mysql, a Code() int
+// method (modernc.org/sqlite), and message-only SQLite drivers.
+type textErr string
+
+func (e textErr) Error() string { return string(e) }
+
+type codeErr struct {
+	code int
+	msg  string
+}
+
+func (e codeErr) Error() string { return e.msg }
+func (e codeErr) Code() int     { return e.code }
+
+func TestErrorClassifierPerDialect(t *testing.T) {
+	cases := []struct {
+		name string
+		d    sqlstore.Dialect
+		err  error
+		want string // "lock", "exhausted" or "plain"
+	}{
+		{"mysql lock wait text", sqlstore.MySQL, textErr("Error 1205 (HY000): Lock wait timeout exceeded; try restarting transaction"), "lock"},
+		{"mysql out of range text", sqlstore.MySQL, textErr("Error 1690 (22003): BIGINT value is out of range in '(`counter` + 5)'"), "exhausted"},
+		{"mysql warn out of range", sqlstore.MySQL, textErr("Error 1264 (22003): Out of range value for column 'counter' at row 1"), "exhausted"},
+		{"mysql deadlock is only wrapped", sqlstore.MySQL, textErr("Error 1213 (40001): Deadlock found when trying to get lock"), "plain"},
+		{"mysql other", sqlstore.MySQL, textErr("Error 1062 (23000): Duplicate entry"), "plain"},
+		{"mysql plain text", sqlstore.MySQL, errors.New("connection refused"), "plain"},
+		{"sqlite busy code", sqlstore.SQLite, codeErr{5, "database is locked (5) (SQLITE_BUSY)"}, "lock"},
+		{"sqlite locked code", sqlstore.SQLite, codeErr{6, "database table is locked"}, "lock"},
+		{"sqlite extended busy code", sqlstore.SQLite, codeErr{261, "database is locked"}, "lock"},
+		{"sqlite check code", sqlstore.SQLite, codeErr{275, "constraint failed: CHECK constraint failed: counter (275)"}, "exhausted"},
+		{"sqlite unique is not exhaustion", sqlstore.SQLite, codeErr{2067, "constraint failed: UNIQUE constraint failed: sequences.name (2067)"}, "plain"},
+		{"sqlite busy text only", sqlstore.SQLite, textErr("database is locked"), "lock"},
+		{"sqlite check text only", sqlstore.SQLite, textErr("CHECK constraint failed: counter"), "exhausted"},
+		{"postgres lock", sqlstore.Postgres, sqlStateErr{"55P03"}, "lock"},
+		{"postgres overflow", sqlstore.Postgres, sqlStateErr{"22003"}, "exhausted"},
+		{"postgres mysql-looking text is ignored", sqlstore.Postgres, textErr("Error 1205 (HY000): x"), "plain"},
+	}
+	for _, c := range cases {
+		db, d := newFakeDB(t)
+		d.fail = c.err
+		s, _ := sqlstore.New(db, c.d)
+		_, err := s.Incr(context.Background(), sequence.Key{Name: "x"}, "p", 1)
+		gotLock, gotEx := errors.Is(err, sequence.ErrLockTimeout), errors.Is(err, sequence.ErrExhausted)
+		switch c.want {
+		case "lock":
+			if !gotLock || gotEx {
+				t.Errorf("%s: %v", c.name, err)
+			}
+		case "exhausted":
+			if !gotEx || gotLock {
+				t.Errorf("%s: %v", c.name, err)
+			}
+		default:
+			if gotLock || gotEx || !errors.Is(err, c.err) {
+				t.Errorf("%s: must be wrapped and unmapped, got %v", c.name, err)
+			}
+		}
+	}
+}
+
+func TestMigrationsAndSchemaForEveryDialect(t *testing.T) {
+	for _, c := range []struct {
+		d     sqlstore.Dialect
+		wants []string
+	}{
+		{sqlstore.Postgres, []string{"timestamptz", "PRIMARY KEY (name, scope, period)"}},
+		{sqlstore.MySQL, []string{"utf8mb4_0900_bin", "PRIMARY KEY (name, scope, period)", "ENGINE=InnoDB"}},
+		{sqlstore.SQLite, []string{"WITHOUT ROWID", "typeof(counter) = 'integer'", "PRIMARY KEY (name, scope, period)"}},
+	} {
+		b, err := fs.ReadFile(sqlstore.Migrations(c.d), "0001_create_sequences.sql")
+		if err != nil {
+			t.Fatalf("%v: %v", c.d, err)
+		}
+		for _, want := range c.wants {
+			if !strings.Contains(string(b), want) {
+				t.Errorf("%v migration lacks %q", c.d, want)
+			}
+		}
+		custom, err := sqlstore.Schema(c.d, "app.my_seq")
+		if err != nil || !strings.Contains(custom, "CREATE TABLE IF NOT EXISTS app.my_seq (") || strings.Contains(custom, "EXISTS sequences") {
+			t.Errorf("%v custom schema:\n%s\n%v", c.d, custom, err)
+		}
+		if def, _ := sqlstore.Schema(c.d, "sequences"); def != string(b) {
+			t.Errorf("%v: Schema with the default name must equal the migration", c.d)
+		}
 	}
 }

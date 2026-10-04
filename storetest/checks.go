@@ -39,6 +39,7 @@ var coreChecks = []namedCheck{
 	{"RejectsNonPositiveBy", checkRejectsNonPositive},
 	{"Isolation", checkIsolation},
 	{"EmptyScopeAndPeriod", checkEmptyScopeAndPeriod},
+	{"CaseAndWhitespaceSensitive", checkCaseAndWhitespace},
 	{"Concurrency", checkConcurrency},
 	{"ConcurrentRanges", checkConcurrentRanges},
 	{"Context", checkContext},
@@ -161,6 +162,30 @@ func checkEmptyScopeAndPeriod(ctx context.Context, s sequence.Store, _ config) e
 			if err := expect(c.label, got, round); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// checkCaseAndWhitespace guards against databases whose default collation is case-insensitive or
+// ignores trailing spaces (MySQL's): keys that differ only in case or trailing whitespace are
+// different counters.
+func checkCaseAndWhitespace(ctx context.Context, s sequence.Store, _ config) error {
+	n := names{}.next()
+	type part struct{ name, scope, period string }
+	variants := []part{
+		{n + "A", "s", "p"}, {n + "a", "s", "p"}, // name case
+		{n + "A ", "s", "p"}, {n + "a ", "s", "p"}, // name trailing space
+		{n + "A", "T", "p"}, {n + "A", "t", "p"}, {n + "A", "t ", "p"}, // scope case and space
+		{n + "A", "s", "Q"}, {n + "A", "s", "q"}, {n + "A", "s", "q "}, // period case and space
+	}
+	for i, v := range variants {
+		got, err := s.Incr(ctx, sequence.Key{Name: v.name, Scope: v.scope}, v.period, 1)
+		if err != nil {
+			return err
+		}
+		if err := expect(fmt.Sprintf("first Incr of variant %d %q: keys that differ only in case or trailing space must not share a counter", i, v), got, 1); err != nil {
+			return err
 		}
 	}
 	return nil
