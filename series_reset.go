@@ -42,12 +42,17 @@ func (s *Series) Current(ctx context.Context, opts ...CallOption) (last int64, i
 	if raw-1 > math.MaxInt64-s.start {
 		return 0, false, &ExhaustedError{Key: key, Period: period, Max: math.MaxInt64, Seq: raw}
 	}
-	return s.start + (raw - 1), true, nil
+	last = s.start + (raw - 1)
+	if s.maxSet && last > s.max {
+		last = s.max // calls past the maximum advance the counter but issue nothing
+	}
+	return last, true, nil
 }
 
 // Reset makes the next number issued in the selected partition exactly next. It requires
-// next >= the series start, otherwise it returns ErrInvalidConfig. Repairing drift after an
-// import is Reset(ctx, highestIssued+1).
+// next >= the series start and, with WithMax, next <= max+1 (max+1 marks the series full),
+// otherwise it returns ErrInvalidConfig. Repairing drift after an import is
+// Reset(ctx, highestIssued+1).
 //
 // Reset is a single atomic write on the store. Concurrent Next calls serialize against it at the
 // row, so no two callers ever see the same number from one counter state, but a reset to a lower
@@ -61,6 +66,9 @@ func (s *Series) Reset(ctx context.Context, next int64, opts ...CallOption) erro
 	}
 	if next < s.start {
 		return fmt.Errorf("%w: next (%d) must be >= start (%d)", ErrInvalidConfig, next, s.start)
+	}
+	if s.maxSet && s.max < math.MaxInt64 && next > s.max+1 {
+		return fmt.Errorf("%w: next (%d) must be <= max+1 (%d)", ErrInvalidConfig, next, s.max+1)
 	}
 	key, period, _, err := s.resolve(newCallConfig(opts))
 	if err != nil {
