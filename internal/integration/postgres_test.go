@@ -486,3 +486,62 @@ func TestResetUnderConcurrentNext(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// Reserve takes one range with one statement: concurrent reservations never overlap, and the
+// range inside a rolled-back caller transaction is given back (gapless).
+func TestReserveOnPostgres(t *testing.T) {
+	db := openDB(t)
+	pool := newStore(t, db, newTable(t, db))
+	seq, _ := sequence.New(pool)
+	ctx := context.Background()
+	s, _ := seq.Series("batch")
+
+	var mu sync.Mutex
+	seen := map[int64]bool{}
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 10 {
+				ns, err := s.Reserve(ctx, 5)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				for i, n := range ns {
+					if i > 0 && n.Seq != ns[i-1].Seq+1 {
+						t.Errorf("range not contiguous: %d then %d", ns[i-1].Seq, n.Seq)
+					}
+					if seen[n.Seq] {
+						t.Errorf("duplicate %d", n.Seq)
+					}
+					seen[n.Seq] = true
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	for i := int64(1); i <= 40*10*5; i++ {
+		if !seen[i] {
+			t.Fatalf("gap at %d", i)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns, err := s.WithStore(pool.WithTx(tx)).Reserve(ctx, 50)
+	if err != nil || ns[0].Seq != 2001 {
+		t.Fatalf("in tx: %v, %v", ns, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Next(ctx); err != nil || n.Seq != 2001 {
+		t.Fatalf("after rollback got %+v, %v; the reserved block must be given back", n, err)
+	}
+}
