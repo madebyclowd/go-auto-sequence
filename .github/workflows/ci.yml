@@ -154,11 +154,38 @@ jobs:
           SEQ_TEST_MYSQL_DSN: root:mysql@tcp(127.0.0.1:3306)/seqtest?parseTime=true
         run: go test -race -count=1 -v ./...
 
+  api:
+    name: API compatibility (gorelease)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      # Compares the exported API with the latest release. Below v1 a break is allowed, so the
+      # result is only printed; from v1 on, an incompatible change fails the job.
+      - name: Check the exported API
+        run: |
+          go install golang.org/x/exp/cmd/gorelease@v0.0.0-20260908205506-85c1c2202aba
+          latest=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)
+          status=0
+          "$(go env GOPATH)/bin/gorelease" || status=$?
+          case "$latest" in
+            v0.*) exit 0 ;;
+            *) exit $status ;;
+          esac
+
   # One stable required check for branch protection. Matrix cell names change
   # over time, so protection requires this aggregator instead of each cell.
   tests:
     name: Tests
-    needs: [unit, tidy, integration]
+    needs: [unit, tidy, integration, api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -167,6 +194,7 @@ jobs:
           UNIT: ${{ needs.unit.result }}
           TIDY: ${{ needs.tidy.result }}
           INTEGRATION: ${{ needs.integration.result }}
+          API: ${{ needs.api.result }}
         run: |
-          echo "unit=$UNIT tidy=$TIDY integration=$INTEGRATION"
-          test "$UNIT" = "success" && test "$TIDY" = "success" && test "$INTEGRATION" = "success"
+          echo "unit=$UNIT tidy=$TIDY integration=$INTEGRATION api=$API"
+          test "$UNIT" = "success" && test "$TIDY" = "success" && test "$INTEGRATION" = "success" && test "$API" = "success"
