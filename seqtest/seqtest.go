@@ -6,6 +6,9 @@
 //	n, _ := inv.Next(ctx)
 //	f.Clock.Advance(32 * 24 * time.Hour) // the month rolls over
 //
+// The fake clock starts at 2026-06-17 12:00:00 UTC unless you pass At. That default is part of the
+// package's contract and will not change, so a test may assert numbers that depend on it.
+//
 // It deliberately has no assertion helpers: compare with a plain if and t.Errorf so the failure
 // message says what you meant. Tests that need a real database use package storetest and their
 // own wiring. For checking a Store implementation, see package storetest.
@@ -69,7 +72,7 @@ type config struct {
 	seqOpts []sequence.Option
 }
 
-// At sets the fake clock's start time. Default: 2026-06-17 12:00:00 UTC.
+// At sets the fake clock's start time. Default: 2026-06-17 12:00:00 UTC, which is stable.
 func At(t time.Time) Option { return func(c *config) { c.start = t } }
 
 // WithSequencerOptions forwards options to sequence.New, for example WithLocation, WithLogger or

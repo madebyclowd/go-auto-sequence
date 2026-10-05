@@ -32,7 +32,9 @@ func RequireScope() SeriesOption { return func(c *seriesConfig) { c.requireScope
 // WithMax caps the series at maxVal (a visible sequence value) and sets the exhaustion warning
 // threshold as a percentage (1..100) of the numbers between the start value and maxVal. A call
 // that would issue a value above maxVal returns an *ExhaustedError (matching ErrExhausted). The
-// exhaustion handler, if any, is notified when an issued number crosses the threshold.
+// exhaustion handler, if any, is notified when an issued number crosses the threshold. The
+// threshold is rounded up, so the warning fires at or after the stated percentage, never before:
+// with a start of 1, a maximum of 10 and 85 percent it fires at 9, not 8.
 // maxVal must be >= the start value.
 func WithMax(maxVal int64, thresholdPercent int) SeriesOption {
 	return func(c *seriesConfig) { c.max, c.thresholdPct, c.maxSet = maxVal, thresholdPercent, true }
