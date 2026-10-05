@@ -140,7 +140,6 @@ func (s *Series) resolve(cfg callConfig) (key Key, period string, at time.Time, 
 	return key, period, at, nil
 }
 
-// checkMax returns an *ExhaustedError when last, the highest value of a call, is above max.
 func (s *Series) checkMax(key Key, period string, last int64) error {
 	if s.maxSet && last > s.max {
 		return &ExhaustedError{Key: key, Period: period, Max: s.max, Seq: last}
@@ -168,7 +167,7 @@ func (s *Series) notify(ctx context.Context, key Key, period string, first, last
 // numbers from start to max, rounded up, counted from start.
 func thresholdSeq(start, maxVal int64, pct int) int64 {
 	count := new(big.Int).Sub(big.NewInt(maxVal), big.NewInt(start))
-	count.Add(count, big.NewInt(1)) // numbers available
+	count.Add(count, big.NewInt(1))
 	pos := new(big.Int).Mul(count, big.NewInt(int64(pct)))
 	pos.Add(pos, big.NewInt(99))
 	pos.Div(pos, big.NewInt(100)) // ceil(count*pct/100), at least 1

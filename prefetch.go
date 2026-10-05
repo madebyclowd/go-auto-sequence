@@ -103,7 +103,7 @@ func (p *prefetchStore) acquire(pk prefetchKey) *prefetchState {
 	defer p.mu.Unlock()
 	st, ok := p.keys[pk]
 	if !ok {
-		st = &prefetchState{lock: make(chan struct{}, 1), next: 1, end: 0} // empty
+		st = &prefetchState{lock: make(chan struct{}, 1), next: 1, end: 0}
 		p.keys[pk] = st
 	}
 	st.refs++
