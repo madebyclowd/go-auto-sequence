@@ -10,8 +10,7 @@
 // package's contract and will not change, so a test may assert numbers that depend on it.
 //
 // It deliberately has no assertion helpers: compare with a plain if and t.Errorf so the failure
-// message says what you meant. Tests that need a real database use package storetest and their
-// own wiring. For checking a Store implementation, see package storetest.
+// message says what you meant. To check a Store implementation, see package storetest.
 package seqtest
 
 import (

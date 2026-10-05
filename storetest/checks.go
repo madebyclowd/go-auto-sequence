@@ -206,7 +206,7 @@ func fanOut(workers int, fn func(worker int) error) error {
 	}
 	wg.Wait()
 	close(errs)
-	return <-errs // nil when the channel is empty
+	return <-errs
 }
 
 func checkConcurrency(ctx context.Context, s sequence.Store, c config) error {
