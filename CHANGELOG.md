@@ -3,6 +3,11 @@
 All notable changes to `go-auto-sequence` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-10-05
+
+### Changed
+- First stable release. The exported API of the root package, `memstore`, `sqlstore`, `storetest` and `seqtest` now follows semantic versioning: no breaking changes within v1. Before the release the defaults that v1 freezes were audited: the `Reserve` and `Prefetch` size limits, `errors.ErrUnsupported` for a store without `Resetter`, the `Current` clamp and `Reset` bound with `WithMax`, the rounding of the warning threshold, and the `seqtest` default clock. The release has not been run by a real application, only by the test suites on PostgreSQL, MySQL and SQLite.
+
 ## [0.1.0] - 2026-10-04
 
 ### Added
@@ -21,3 +26,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and thi
   `seqtest`, an in-memory fixture with a fake clock you move yourself for testing code that issues numbers.
 
 [0.1.0]: https://github.com/madebyclowd/go-auto-sequence/releases/tag/v0.1.0
+
+[1.0.0]: https://github.com/madebyclowd/go-auto-sequence/compare/v0.1.0...v1.0.0
