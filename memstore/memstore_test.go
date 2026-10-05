@@ -84,3 +84,13 @@ func TestResetterRoundTrip(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func BenchmarkIncr(b *testing.B) {
+	s := memstore.New()
+	ctx := context.Background()
+	k := sequence.Key{Name: "invoice"}
+	b.ReportAllocs()
+	for range b.N {
+		_, _ = s.Incr(ctx, k, "", 1)
+	}
+}

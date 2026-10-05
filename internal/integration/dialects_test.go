@@ -79,7 +79,7 @@ func openMySQL(t *testing.T, extra string) *sql.DB {
 
 var envs = []env{
 	{name: "mysql", dialect: sqlstore.MySQL, open: func(t *testing.T) *sql.DB { return openMySQL(t, "") },
-		bigRow: "INSERT INTO %s (name, counter) VALUES ('big', 9223372036854775806)", workers: 100},
+		bigRow: "INSERT INTO %s (name, counter) VALUES ('big', 9223372036854775806)", workers: 200},
 	{name: "sqlite", dialect: sqlstore.SQLite, open: openSQLite,
 		bigRow: "INSERT INTO %s (name, counter) VALUES ('big', 9223372036854775806)", workers: 40},
 }

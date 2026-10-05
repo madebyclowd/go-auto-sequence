@@ -340,3 +340,22 @@ func TestConcurrentNext(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkNext(b *testing.B) {
+	seq, err := sequence.New(memstore.New())
+	if err != nil {
+		b.Fatal(err)
+	}
+	f, _ := sequence.ParseFormat("INV-{YYYY}-{seq:5}")
+	inv, err := seq.Series("invoice", sequence.WithFormat(f), sequence.WithPeriod(sequence.Yearly))
+	if err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := inv.Next(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
