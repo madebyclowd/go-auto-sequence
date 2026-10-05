@@ -13,5 +13,5 @@
 // and is used as sequence.New(...). The import path and the package name differ,
 // as with go-redis.
 //
-// Status: v0, pre-release. The API may change in minor releases until v1.0.0.
+// Status: v1. The exported API is stable under semantic versioning.
 package sequence

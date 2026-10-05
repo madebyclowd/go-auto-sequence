@@ -191,7 +191,10 @@ and `storetest.RunTx` if it can bind to a transaction.
 
 ## Limits and honesty
 
-- v0: the API may change in minor releases until v1.0.0.
+- v1: the exported API is stable under semantic versioning. It was not exercised by a real application before the
+  release, only by the test suites.
+- Drivers run in the tests: pgx (PostgreSQL), go-sql-driver/mysql and modernc.org/sqlite. Error mapping for `lib/pq` and
+  `mattn/go-sqlite3` follows the same documented codes but was not run.
 - No throughput or latency numbers are published; none have been measured.
 - Number recycling (re-using numbers of deleted records) and step increments are deliberately not included.
 - Notifications are at-least-once; `Prefetch` and pool-bound numbers can have gaps; a reset can re-issue numbers.

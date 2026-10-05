@@ -12,8 +12,9 @@ requests arrive in the same second.
 It works with any Go project: the standard library's `database/sql`, GORM, sqlx, bun, sqlc. It does
 not depend on a web framework or an ORM.
 
-> **Status: v0.1.0, the first pre-release.** The API may change in minor releases until v1.0.0.
-> It has not yet been used by a real application, which is the gate to v1.0.0.
+> **Status: v1, stable.** The exported API follows semantic versioning: no breaking changes within v1.
+> It is tested against PostgreSQL 17, MySQL 8.4 and SQLite in CI, but it has not yet been used by a real
+> application of its own, so field reports are welcome.
 
 Install:
 
